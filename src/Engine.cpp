@@ -6,6 +6,7 @@ Engine::Engine(int screenWidth, int screenHeight) : gameStatus(STARTUP), fovRadi
   player->destructible=new PlayerDestructible(30,2,"your corpse");
   player->attacker=new Attacker(5);
   player->ai = new PlayerAi();
+  player->container = new Container(26);
   actors.push(player); //add player to actors array
   map = new Map(80,43); //make map note: smaller than console
   gui = new Gui();

@@ -16,6 +16,14 @@ float Destructible::takeDamage(Actor *owner, float damage) { //owner takes damag
   }
   return damage;
 }
+float Destructible::heal(float amount) {
+  hp+=amount;
+  if ( hp >= maxHp ) {
+    amount = hp-maxHp;
+    hp = maxHp;
+  }
+  return amount;
+}
 void Destructible::die(Actor *owner) { //die virtual voida assigns basic corpse attributes
   owner->ch='%';
   owner->col=TCODColor::darkRed;
@@ -30,11 +38,11 @@ PlayerDestructible::PlayerDestructible(float maxHp, float defense, const char *c
   Destructible(maxHp,defense,corpseName) {
   }
 void MonsterDestructible::die(Actor *owner) { //monster die prints message then calls Destructible::die
-  engine.gui->message(TCODColor::lightGrey, "%s is dead\n",owner->name);
+  engine.gui->message(TCODColor::lightGrey, "%s is dead",owner->name);
   Destructible::die(owner);
 }
 void PlayerDestructible::die(Actor *owner){ //player die prints message, calls Destructible::die then sets game to DEFEAT
-  engine.gui->message(TCODColor::lightGrey, "You died!\n");
+  engine.gui->message(TCODColor::lightGrey, "You died!");
   Destructible::die(owner);
   engine.gameStatus=Engine::DEFEAT;
 }

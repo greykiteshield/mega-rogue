@@ -15,6 +15,7 @@ class Map {
     void render() const;
     void addMonster(int x, int y);
     bool canWalk(int x, int y) const;
+    void addItem(int x, int y);
   protected :
     TCODMap *map;
     Tile *tiles;

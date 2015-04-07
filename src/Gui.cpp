@@ -53,9 +53,9 @@ Gui::Message::~Message() { //destructor
 }
 
 void Gui::message(const TCODColor &col, const char *text, ...) { //puts message in log         
-  va_list ap;                                                    
-  char buf[128];                                                 
-  va_start(ap,text);
+  va_list ap;                                                    //creates va_list where VA_ARGS will be stored
+  char buf[128];                                                 //sets buf char array at 128
+  va_start(ap,text);                                             //
   vsprintf(buf,text,ap);
   va_end(ap); 
   char *lineBegin=buf;

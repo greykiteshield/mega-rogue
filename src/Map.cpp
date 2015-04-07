@@ -4,6 +4,7 @@
 static const int ROOM_MAX_SIZE = 12;
 static const int ROOM_MIN_SIZE = 6;
 static const int MAX_ROOM_MONSTERS = 3;
+static const int MAX_ROOM_ITEMS = 2;
 class BspListener : public ITCODBspCallback { //BSP listener from ITCOD Bsp library, high voodoo, digs map after 
                                               //splitting map into nodes randomly until they are as small as 
                                               //they can be while still being bigger than ROOM_MAX_SIZE, then 
@@ -83,6 +84,13 @@ bool Map::canWalk(int x, int y) const { //returns true if not a wall or actor th
   }
   return true;
 }
+void Map::addItem(int x, int y) {
+  Actor *healthPotion=new Actor(x,y,'!',"health potion", TCODColor::violet);
+  healthPotion->blocks=false;
+  healthPotion->pickable=new Healer(4);
+  engine.actors.push(healthPotion);
+}
+    
 void Map::dig(int x1, int y1, int x2, int y2) {  //digs a hole in the map at coords
   if ( x2 < x1 ) {
     int tmp = x2;
@@ -104,6 +112,7 @@ void Map::dig(int x1, int y1, int x2, int y2) {  //digs a hole in the map at coo
 
 void Map::createRoom(bool first, int x1, int y1, int x2, int y2) { //creates room using dig and places player 
                                                                    //and random number of monsters
+  int nbItem=rng->getInt(0,MAX_ROOM_ITEMS);
   dig (x1,y1,x2,y2);
   if ( first ) {
     engine.player->x=(x1+x2)/2;
@@ -120,6 +129,14 @@ void Map::createRoom(bool first, int x1, int y1, int x2, int y2) { //creates roo
       }
       nbMonsters--;
     }
+  }
+  while (nbItem > 0) {
+    int x=rng->getInt(x1,x2);
+    int y=rng->getint(y1,y2);
+    if (canWalk(x,y)) {
+      addItem(x,y);
+    }
+    nbItem--;
   }
 }
 
