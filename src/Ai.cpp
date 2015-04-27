@@ -2,96 +2,230 @@
 #include <math.h>
 #include "main.hpp"
 
-
-static const int TRACKING_TURNS=3; //Number of turns that a monster remembers the position of the player without LoS
-
-void PlayerAi::update(Actor *owner) { //updates player 
-  if ( owner->destructible && owner->destructible->isDead() ) {  //checks if dead
-    return;
-  }
-  int dx=0,dy=0;
-  switch(engine.lastKey.vk) { //listens for keypress and then modifies (d)elta x and (d)elta y
-    case TCODK_CHAR :         //woot! wrote my first lines of completely independent code.
-      switch ( engine.lastKey.c ) {
-        case 'y' : dy=-1; dx=-1; break;
-        case 'u' : dy=-1; dx=1; break;
-        case 'b' : dy=1; dx=-1; break;
-        case 'n' : dy=1; dx=1; break;
-        case 'h' : dx=-1; break;
-        case 'l' : dx=1; break;
-        case 'j' : dy=1; break;
-        case 'k' : dy=-1; break;
-      } handleActionKey(owner, engine.lastKey.c ); break;
-    case TCODK_UP : dy=-1; break;
-    case TCODK_DOWN : dy=1; break;
-    case TCODK_LEFT : dx=-1; break;
-    case TCODK_RIGHT : dx=1; break;
-    default:break;
-  }
-
-  if (dx != 0 || dy != 0){ //if movement has occured, set NEW_TURN, if moveOrAttack, computeFov
-    if (moveOrAttack(owner, owner->x+dx,owner->y+dy)) {
-      engine.gameStatus=Engine::NEW_TURN;
-      engine.map->computeFov();
-    }
-  }
+// how many turns the monster chases the player
+// after losing his sight
+static const int TRACKING_TURNS=3;
+const int LEVEL_UP_BASE=200;
+const int LEVEL_UP_FACTOR=150;
+//Constructor
+MonsterAi::MonsterAi() : moveCount(0) {
 }
-bool PlayerAi::moveOrAttack(Actor *owner, int targetx, int targety) { //checks for player movement or attack on enemy and then executes
-  if ( engine.map->isWall(targetx,targety) ) return false; //can't go through or attack walls
-  for ( Actor **iterator=engine.actors.begin(); iterator != engine.actors.end(); iterator++){ //checks for all actors and then compares them for destructible, blocks, in the same square as player and if so attacks
-    Actor *actor=*iterator;
-    if ( actor->destructible && actor->blocks && actor->x == targetx && actor->y == targety) {
-      owner->attacker->attack(owner, actor);
-      return false; //doesn't move
+//update methods that tracks move count
+void MonsterAi::update(Actor *owner) {
+    if ( owner->destructible && owner->destructible->isDead() ) {
+    	return;
     }
-  }
-  for ( Actor **iterator=engine.actors.begin(); iterator != engine.actors.end(); iterator++){ //checks all actors for destructible, dead, in the same square as player then prints message that there is a corpse
-    Actor *actor=*iterator;
-    bool corpseOrItem=(actor->destructible && actor->destructible->isDead()) || actor->pickable;
-    if ( corpseOrItem && actor->x == targetx && actor->y == targety ) {
-      engine.gui->message(TCODColor::lightGrey, "There's a %s here.\n",actor->name);
+	if ( engine.map->isInFov(owner->x,owner->y) ) {
+    	// we can see the player. move towards him
+    	moveCount=TRACKING_TURNS;
+    } else {
+    	moveCount--;
     }
-  } 
-  owner->x=targetx;
-  owner->y=targety;
-  return true; //moves
+   	if ( moveCount > 0 ) {
+   		moveOrAttack(owner, engine.player->x,engine.player->y);
+   	}
 }
+//Moves with slide step and attacks or false
+void MonsterAi::moveOrAttack(Actor *owner, int targetx, int targety) {
+	int dx = targetx - owner->x;
+	int dy = targety - owner->y;
+	int stepdx = (dx > 0 ? 1:-1);
+	int stepdy = (dy > 0 ? 1:-1);
+	float distance=sqrtf(dx*dx+dy*dy);
+	if ( distance >= 2 ) {
+		dx = (int)(round(dx/distance));
+		dy = (int)(round(dy/distance));
+		if ( engine.map->canWalk(owner->x+dx,owner->y+dy) ) {
+			owner->x += dx;
+			owner->y += dy;
+		} else if ( engine.map->canWalk(owner->x+stepdx,owner->y) ) {
+			owner->x += stepdx;
+		} else if ( engine.map->canWalk(owner->x,owner->y+stepdy) ) {
+			owner->y += stepdy;
+		}
+	} else if ( owner->attacker ) {
+		owner->attacker->attack(owner,engine.player);
+	}
+}
+//Constructor
+ConfusedMonsterAi::ConfusedMonsterAi(int nbTurns, Ai *oldAi) 
+	: nbTurns(nbTurns),oldAi(oldAi) {
+}
+//Random movement
+void ConfusedMonsterAi::update(Actor *owner) {
+	TCODRandom *rng=TCODRandom::getInstance();
+	int dx=rng->getInt(-1,1);
+	int dy=rng->getInt(-1,1);
+	if ( dx != 0 || dy != 0 ) {
+		int destx=owner->x+dx;
+		int desty=owner->y+dy;
+		if ( engine.map->canWalk(destx, desty) ) {
+			owner->x = destx;
+			owner->y = desty;
+		} else {
+			Actor *actor=engine.getActor(destx, desty);
+			if ( actor ) {
+				owner->attacker->attack(owner, actor);
+			}
+		}
+	}
+	nbTurns--;
+	if ( nbTurns == 0 ) {
+		owner->ai = oldAi;
+		delete this;
+	}
+}
+PlayerAi::PlayerAi() : xpLevel(1) {
+}
+int PlayerAi::getNextLevelXp() {
+  return LEVEL_UP_BASE + xpLevel*LEVEL_UP_FACTOR;
+}
+//Handles movement and FOV
+void PlayerAi::update(Actor *owner) {
+  int levelUpXp = getNextLevelXp();
+  if ( owner->destructible->xp >= levelUpXp ) {
+    xpLevel++;
+    owner->destructible->xp -= levelUpXp;
+    engine.gui->message(TCODColor::yellow,"LVL up, woot!");
+  }
+    if ( owner->destructible && owner->destructible->isDead() ) {
+    	return;
+    }
+	int dx=0,dy=0;
+	switch(engine.lastKey.vk) {
+		case TCODK_UP : dy=-1; break;
+		case TCODK_DOWN : dy=1; break;
+		case TCODK_LEFT : dx=-1; break;
+		case TCODK_RIGHT : dx=1; break;
+		case TCODK_CHAR : handleActionKey(owner, engine.lastKey.c); break;
+        default:break;
+    }
+    if (dx != 0 || dy != 0) {
+    	engine.gameStatus=Engine::NEW_TURN;
+    	if (moveOrAttack(owner, owner->x+dx,owner->y+dy)) {
+    		engine.map->computeFov();
+    	}
+	}
+}
+//Determines action to take on movement
+bool PlayerAi::moveOrAttack(Actor *owner, int targetx,int targety) {
+	if ( engine.map->isWall(targetx,targety) ) return false;
+	// look for living actors to attack
+	for (Actor **iterator=engine.actors.begin();
+		iterator != engine.actors.end(); iterator++) {
+		Actor *actor=*iterator;
+		if ( actor->destructible && !actor->destructible->isDead()
+			 && actor->x == targetx && actor->y == targety ) {
+			owner->attacker->attack(owner, actor);
+			return false;
+		}
+	}
+	// look for corpses or items
+	for (Actor **iterator=engine.actors.begin();
+		iterator != engine.actors.end(); iterator++) {
+		Actor *actor=*iterator;
+		bool corpseOrItem=(actor->destructible && actor->destructible->isDead())
+			|| actor->pickable;
+		if ( corpseOrItem
+			 && actor->x == targetx && actor->y == targety ) {
+			engine.gui->message(TCODColor::lightGrey,"There's a %s here.",actor->name);
+		}
+	}
+	owner->x=targetx;
+	owner->y=targety;
+	return true;
+}
+
 void PlayerAi::handleActionKey(Actor *owner, int ascii) {
-  switch (ascii) {
-    case 'g' : 
-      {
-        bool found = false;
-        for (Actor **iterator=engine.actors.begin(); iterator!=engine.actors.end(); iterator++) {
-          Actor *actor=*iterator;
-          if ( actor->picable && actor->x == owner->x && actor->y==owner->y) {
-            if (actor->pickable->pick(actor,owner)) {
-              found=true;
-              engine.gui->message(TCODColor::lightGrey,"you pick the %s.",actor->name);
-              break;
-            } else if (! found) {
-              found=true;
-              engine.gui->message(TCODColor::red,"your invetory is full.");
-            }
-          }
-        }
-        if (!found) {
-          engine.gui->message(TCODColor::lightGrey,"there's nothing here that you can pick.")
-        }
-        engine.gameStatus=Engine::NEW_TURN;
-      } break;
-    case 'i' :
-      {
-        Actor *actor=choseFromInventory(owner);
-        if (actor ) {
-          actor->pickable->use(actor,owner);
-          engine.gameStatus=Engine::NEWTURN;
-        }
-      } break;
-  }
+	switch(ascii) {
+		case 'd' : // drop item 
+		{
+			Actor *actor=choseFromInventory(owner);
+			if ( actor ) {
+				actor->pickable->drop(actor,owner);
+				engine.gameStatus=Engine::NEW_TURN;
+			}			
+		}
+		break;
+		case 'g' : // pickup item
+		{
+			bool found=false;
+			for (Actor **iterator=engine.actors.begin();
+				iterator != engine.actors.end(); iterator++) {
+				Actor *actor=*iterator;
+				if ( actor->pickable && actor->x == owner->x && actor->y == owner->y ) {
+					if (actor->pickable->pick(actor,owner)) {
+						found=true;
+						engine.gui->message(TCODColor::lightGrey,"You pick the %s.",
+							actor->name);
+						break;
+					} else if (! found) {
+						found=true;
+						engine.gui->message(TCODColor::red,"Your inventory is full.");
+					}
+				}
+			}
+			if (!found) {
+				engine.gui->message(TCODColor::lightGrey,"There's nothing here that you can pick.");
+			}
+			engine.gameStatus=Engine::NEW_TURN;
+		}
+		break;
+		case 'i' : // display inventory
+		{
+			Actor *actor=choseFromInventory(owner);
+			if ( actor ) {
+				actor->pickable->use(actor,owner);
+				engine.gameStatus=Engine::NEW_TURN;
+			}
+		}
+		break;
+    case '>' :
+      if ( engine.stairs->x == owner->x && engine.stairs->y == owner->y ) {
+        engine.nextLevel();
+      } else {
+        engine.gui->message(TCODColor::lightGrey,"No stairs here");
+      }
+      break;
+	}
 }
+
 Actor *PlayerAi::choseFromInventory(Actor *owner) {
-  static const int INVENTORY_WIDTH=50;
-  static const int INVENTORY_HEIGHT=28;
-  static TCODConsole con(INVENTORY_WIDTH,INVENTORY_HEIGHT);
-  con.setDefaultForground(TCODColor(200,180,50));
-  con.printFrame(0,0INVENTORY_WIDTH,INVENTORY_HEIGHT,true,TCOD_BKGN_DEFAULT,"inventory");
+	static const int INVENTORY_WIDTH=50;
+	static const int INVENTORY_HEIGHT=28;
+	static TCODConsole con(INVENTORY_WIDTH,INVENTORY_HEIGHT);
+
+	// display the inventory frame
+	con.setDefaultForeground(TCODColor(200,180,50));
+	con.printFrame(0,0,INVENTORY_WIDTH,INVENTORY_HEIGHT,true,
+		TCOD_BKGND_DEFAULT,"inventory");
+
+	// display the items with their keyboard shortcut
+	con.setDefaultForeground(TCODColor::white);
+	int shortcut='a';
+	int y=1;
+	for (Actor **it=owner->container->inventory.begin();
+		it != owner->container->inventory.end(); it++) {
+		Actor *actor=*it;
+		con.print(2,y,"(%c) %s", shortcut, actor->name);
+		y++;
+		shortcut++;
+	}
+
+	// blit the inventory console on the root console
+	TCODConsole::blit(&con, 0,0,INVENTORY_WIDTH,INVENTORY_HEIGHT,
+		TCODConsole::root, engine.screenWidth/2 - INVENTORY_WIDTH/2,
+		engine.screenHeight/2-INVENTORY_HEIGHT/2);
+	TCODConsole::flush();
+
+	// wait for a key press
+	TCOD_key_t key;
+	TCODSystem::waitForEvent(TCOD_EVENT_KEY_PRESS,&key,NULL,true);
+	if ( key.vk == TCODK_CHAR ) {
+		int actorIndex=key.c - 'a';
+		if ( actorIndex >= 0 && actorIndex < owner->container->inventory.size() ) {
+			return owner->container->inventory.get(actorIndex);
+		}
+	}
+	return NULL;
+}

@@ -1,53 +1,155 @@
+#include <math.h>
 #include "main.hpp"
 
-Engine::Engine(int screenWidth, int screenHeight) : gameStatus(STARTUP), fovRadius(10), screenWidth(screenWidth), screenHeight(screenHeight) { //Background handler of computation
-  TCODConsole::initRoot(80,50,"Hey now",false); //make console
-  player = new Actor(40,25,'@',"player",TCODColor::white); //make player
-  player->destructible=new PlayerDestructible(30,2,"your corpse");
-  player->attacker=new Attacker(5);
-  player->ai = new PlayerAi();
-  player->container = new Container(26);
-  actors.push(player); //add player to actors array
-  map = new Map(80,43); //make map note: smaller than console
-  gui = new Gui();
-  gui->message(TCODColor::red, "Howdy, let's get started\nPrepare for your Run");
+Engine::Engine(int screenWidth, int screenHeight) : gameStatus(STARTUP),
+	player(NULL),map(NULL),fovRadius(10),
+	screenWidth(screenWidth),screenHeight(screenHeight),level(1) {
+    TCODConsole::initRoot(screenWidth,screenHeight,"libtcod C++ tutorial",false);
+    gui = new Gui();
 }
 
-Engine::~Engine() { //Destructor
-  actors.clearAndDelete(); //deletes actors
-  delete map; //deletes Map map
-  delete gui;
-}      
-
-void Engine::update() { //engine update function computesFov at STARTUP then sets to IDLE
-  if ( gameStatus == STARTUP ) map->computeFov();
-  gameStatus=IDLE;
-  TCODSystem::checkForEvent(TCOD_EVENT_KEY_PRESS||TCOD_EVENT_MOUSE,&lastKey,&mouse); //TCOD checks for key or mouse event 
-  player->update(); //calls the player update method which moves and attacks if a key is pressed
-  if ( gameStatus == NEW_TURN ) {
-    for (Actor **iterator=actors.begin(); iterator != actors.end(); iterator++ ) { //updates all actors besides the player
-      Actor *actor = *iterator;
-      if (actor != player ) {
-        actor->update();
-      }
-    }
-  }
-} 
-void Engine::sendToBack(Actor *actor) { //sends corpses to the back so that you stand on top of them
-  actors.remove(actor);
-  actors.insertBefore(actor,0);
+void Engine::init() { 
+    player = new Actor(40,25,'@',"player",TCODColor::white);
+    player->destructible=new PlayerDestructible(30,2,"your cadaver");
+    player->attacker=new Attacker(5);
+    player->ai = new PlayerAi();
+    player->container = new Container(26);
+    actors.push(player);
+    stairs = new Actor(0,0,'>',"stairs",TCODColor::white);
+    stairs->blocks = false;
+    stairs->fovOnly = false;
+    actors.push(stairs);
+    map = new Map(80,43);
+    map->init(true);
+    gui->message(TCODColor::red, 
+    	"Welcome stranger!\nPrepare to perish in the Tombs of the Ancient Kings.");
+    gameStatus=STARTUP;
 }
 
-void Engine::render() { //render engine; calls Map::render, Gui::render, TCODConsole::clear, renders actor if in FOV
-  TCODConsole::root->clear();
-  map->render();
-  gui->render();
-  for (Actor **iterator=actors.begin();iterator != actors.end();  iterator++){
-    Actor *actor=*iterator;
-    if ( map->isInFov(actor->x,actor->y) ) {
-      actor->render();
-      TCODConsole::root->print(1,screenHeight-2,"HP : %d/%d", (int)player->destructible->hp,(int)player->destructible->maxHp);
+Engine::~Engine() {
+  term();
+	delete gui;
+}
+
+void Engine::update() {
+	if ( gameStatus == STARTUP ) map->computeFov();
+   	gameStatus=IDLE;
+    TCODSystem::checkForEvent(TCOD_EVENT_KEY_PRESS|TCOD_EVENT_MOUSE,&lastKey,&mouse);
+    if ( lastKey.vk == TCODK_ESCAPE ) {
+       save();
+       load();
+    }
+    player->update();
+    if ( gameStatus == NEW_TURN ) {
+	    for (Actor **iterator=actors.begin(); iterator != actors.end();
+	        iterator++) {
+	        Actor *actor=*iterator;
+	        if ( actor != player ) {
+	            actor->update();
+	        }
+	    }
+	}
+}
+
+void Engine::render() {
+	TCODConsole::root->clear();
+	// draw the map
+	map->render();
+	// draw the actors
+	for (Actor **iterator=actors.begin();
+	    iterator != actors.end(); iterator++) {
+		Actor *actor=*iterator;
+    if ( actor != player && && ((!actor->fovOnly && map->isExplored->x,actor->y) || map->isInFov(actor->x,actor->y)) )   {
+	        actor->render();
+	    }
+	}
+	player->render();
+	// show the player's stats
+	gui->render();
+}
+
+void Engine::sendToBack(Actor *actor) {
+	actors.remove(actor);
+	actors.insertBefore(actor,0);
+}
+
+Actor *Engine::getActor(int x, int y) const {
+	for (Actor **iterator=actors.begin();
+	    iterator != actors.end(); iterator++) {
+		Actor *actor=*iterator;
+		if ( actor->x == x && actor->y ==y && actor->destructible
+			&& ! actor->destructible->isDead()) {
+			return actor;
+		}
+	}
+	return NULL;
+}
+
+Actor *Engine::getClosestMonster(int x, int y, float range) const {
+	Actor *closest=NULL;
+	float bestDistance=1E6f;
+	for (Actor **iterator=actors.begin();
+	    iterator != actors.end(); iterator++) {
+		Actor *actor=*iterator;
+		if ( actor != player && actor->destructible 
+			&& !actor->destructible->isDead() ) {
+			float distance=actor->getDistance(x,y);
+			if ( distance < bestDistance && ( distance <= range || range == 0.0f ) ) {
+				bestDistance=distance;
+				closest=actor;
+			}
+		}
+	}
+	return closest;
+}
+
+bool Engine::pickATile(int *x, int *y, float maxRange) {
+	while ( !TCODConsole::isWindowClosed() ) {
+		render();
+		// highlight the possible range
+		for (int cx=0; cx < map->width; cx++) {
+			for (int cy=0; cy < map->height; cy++) {
+				if ( map->isInFov(cx,cy)
+					&& ( maxRange == 0 || player->getDistance(cx,cy) <= maxRange) ) {
+					TCODColor col=TCODConsole::root->getCharBackground(cx,cy);
+					col = col * 1.2f;
+					TCODConsole::root->setCharBackground(cx,cy,col);
+				}
+			}
+		}
+		TCODSystem::checkForEvent(TCOD_EVENT_KEY_PRESS|TCOD_EVENT_MOUSE,&lastKey,&mouse);
+		if ( map->isInFov(mouse.cx,mouse.cy)
+			&& ( maxRange == 0 || player->getDistance(mouse.cx,mouse.cy) <= maxRange )) {
+			TCODConsole::root->setCharBackground(mouse.cx,mouse.cy,TCODColor::white);
+			if ( mouse.lbutton_pressed ) {
+				*x=mouse.cx;
+				*y=mouse.cy;
+				return true;
+			}
+		} 
+		if (mouse.rbutton_pressed || lastKey.vk != TCODK_NONE) {
+			return false;
+		}
+		TCODConsole::flush();
+	}
+	return false;
+}
+void Engine::term() {
+  actors.clearAndDelete();
+  if ( map ) delete map;
+  gui->clear();
+}
+void Engine::nextLevel() {
+  level++;
+  gui.message(TCODColor::lightViolet,"One down, and down you go");
+  delete map;
+  for ( Actor **it=actors.begin(); it != actors.end(); it++) {
+    if ( *it != player && *it != stairs ) {
+      delete *it;
+      it = actors.remove(it);
     }
   }
-
+  map = new Map(80,43);
+  map->init(true);
+  gameStatus=STARTUP;
 }
